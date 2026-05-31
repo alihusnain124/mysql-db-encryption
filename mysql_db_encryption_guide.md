@@ -47,8 +47,6 @@
 | **Code changes needed?** | ❌ None | ✅ Yes, app must encrypt/decrypt |
 | **Performance impact** | ~3–5% | Higher per query |
 | **Use case** | Encrypt everything | Extra sensitive fields (e.g. passwords) |
-| **Your case** | ✅ Use this | Not needed unless extra layer wanted |
-
 > **Conclusion:** For encrypting the whole database → **TDE is the right and complete solution.**
 
 ---
