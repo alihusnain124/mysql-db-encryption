@@ -8,11 +8,11 @@
 
 | File | Description |
 |---|---|
-| `MySQL_Database_Encryption_Guide.md` | How to enable TDE — full setup |
-| `MySQL_Database_Decryption_Guide.md` | How decryption works + keyring explained |
-| `MySQL_Disable_TDE_Guide.md` | How to safely disable TDE |
-| `MySQL_Encryption_At_Transit_And_At_Rest.md` | Transit vs At Rest — what each means |
-| `Complete_Encryption_Methods_Guide.md` | All 7 encryption methods explained |
+| `mysql_db_encryption_guide.md` | How to enable TDE — full setup |
+| `mysql_db_decryption_guide.md` | How decryption works + keyring explained |
+| `disable_ted_encryption.md` | How to safely disable TDE |
+| `mysql_encryption_at_transit_and_at_rest.md` | Transit vs At Rest — what each means |
+| `complete_encryption_methods.md` | All 7 encryption methods explained |
 
 ---
 
@@ -56,10 +56,10 @@ Hard Disk (encrypted .ibd files)
 
 ## 📖 Where to Start
 
-- New to this? → Start with `MySQL_Encryption_At_Transit_And_At_Rest.md`
-- Want to enable TDE? → `MySQL_Database_Encryption_Guide.md`
-- Want to disable TDE? → `MySQL_Disable_TDE_Guide.md`
-- Want all methods explained? → `Complete_Encryption_Methods_Guide.md`
+- New to this? → Start with `mysql_encryption_at_transit_and_at_rest.md`
+- Want to enable TDE? → `mysql_db_encryption_guide.md`
+- Want to disable TDE? → `disable_ted_encryption.md`
+- Want all methods explained? → `complete_encryption_methods.md`
 
 ---
 
