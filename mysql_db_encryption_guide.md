@@ -1,119 +1,210 @@
-# 🔐 MySQL Database Encryption Guide (TDE - Transparent Data Encryption)
+# 🔓 How to Disable TDE (Transparent Data Encryption) — Complete Guide
 
-> **Complete step-by-step guide** to encrypt your entire MySQL database using TDE (Transparent Data Encryption) for both local and production environments.
+> **Step-by-step guide** to safely disable TDE encryption from your MySQL database without losing any data.
 
 ---
 
 ## 📌 Table of Contents
 
-1. [What is TDE?](#what-is-tde)
-2. [TDE vs Column-Level Encryption](#tde-vs-column-level-encryption)
-3. [Does Data Look Encrypted in MySQL?](#does-data-look-encrypted-in-mysql)
-4. [Prerequisites](#prerequisites)
-5. [Step 1 — Login to MySQL Correctly](#step-1--login-to-mysql-correctly)
-6. [Step 2 — Check MySQL Version](#step-2--check-mysql-version)
-7. [Step 3 — Edit MySQL Config File](#step-3--edit-mysql-config-file)
-8. [Step 4 — Create Keyring Directory](#step-4--create-keyring-directory)
-9. [Step 5 — Restart MySQL](#step-5--restart-mysql)
-10. [Step 6 — Verify Keyring Plugin](#step-6--verify-keyring-plugin)
-11. [Step 7 — Encrypt Your Database](#step-7--encrypt-your-database)
-12. [Step 8 — Verify Encryption](#step-8--verify-encryption)
-13. [Step 9 — Production Setup with Docker (docker-compose.yml)](#step-9--production-setup-with-docker-composeyml)
-14. [Step 10 — Backup Your Keyring File](#step-10--backup-your-keyring-file)
-15. [Common Mistakes](#common-mistakes)
-16. [Security Layering Strategy](#security-layering-strategy)
+1. [Before You Start — Important Warnings](#before-you-start--important-warnings)
+2. [Step 1 — Take Full Backup](#step-1--take-full-backup)
+3. [Step 2 — Login to MySQL](#step-2--login-to-mysql)
+4. [Step 3 — Check Current Encryption Status](#step-3--check-current-encryption-status)
+5. [Step 4 — Decrypt All Tables](#step-4--decrypt-all-tables)
+6. [Step 5 — Decrypt Database Schema](#step-5--decrypt-database-schema)
+7. [Step 6 — Verify Decryption Complete](#step-6--verify-decryption-complete)
+8. [Step 7 — Remove Encryption from Config File](#step-7--remove-encryption-from-config-file)
+9. [Step 8 — Restart MySQL](#step-8--restart-mysql)
+10. [Step 9 — Final Verification](#step-9--final-verification)
+11. [Disable TDE in Docker Setup](#disable-tde-in-docker-setup)
+12. [Disable Only Specific Tables](#disable-only-specific-tables)
+13. [Common Errors and Fixes](#common-errors-and-fixes)
+14. [Quick Reference Commands](#quick-reference-commands)
 
 ---
 
-## 🔍 What is TDE?
+## ⚠️ Before You Start — Important Warnings
 
-**Transparent Data Encryption (TDE)** encrypts your MySQL data **at the disk level**. It means:
-
-- ✅ Your `.ibd` files on disk are **fully encrypted**
-- ✅ Your application code does **NOT need to change**
-- ✅ You and your app see **normal readable data** when querying
-- ✅ If someone **steals your hard drive**, data is completely **unreadable**
-
-> The word **"Transparent"** means encryption/decryption happens automatically in the background — you don't notice it at all.
-
----
-
-## ⚖️ TDE vs Column-Level Encryption
-
-| Feature | TDE (Whole Database) | Column-Level AES |
-|---|---|---|
-| **Scope** | Entire database | Specific columns only |
-| **Data visible in MySQL?** | ✅ Yes, looks normal | ❌ No, looks garbled/binary |
-| **Code changes needed?** | ❌ None | ✅ Yes, app must encrypt/decrypt |
-| **Performance impact** | ~3–5% | Higher per query |
-| **Use case** | Encrypt everything | Extra sensitive fields (e.g. passwords) |
-
-> **Conclusion:** For encrypting the whole database → **TDE is the right and complete solution.**
-
----
-
-## 👁️ Does Data Look Encrypted in MySQL?
-
-| Method | What you see when you open MySQL Workbench / phpMyAdmin |
-|---|---|
-| **TDE** | ✅ Data looks **completely normal and readable** |
-| **Column AES_ENCRYPT()** | ❌ Data shows as **binary/garbled** |
-| **Disk Encryption (LUKS)** | ✅ Data looks **normal inside MySQL** |
-
-> **TDE encrypts the physical files on disk only.** Inside MySQL everything looks and works exactly as before.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    READ THIS FIRST                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ✅ DO THIS BEFORE DISABLING TDE:                          │
+│     1. Take a full database backup                          │
+│     2. Keep your keyring file safe until fully done         │
+│     3. Do this during low traffic time                      │
+│     4. Verify backup works before proceeding                │
+│                                                             │
+│  ❌ NEVER DO THIS:                                         │
+│     1. Delete keyring file before decrypting tables         │
+│     2. Remove config before running ALTER TABLE             │
+│     3. Skip the backup step                                 │
+│                                                             │
+│  IF YOU DELETE KEYRING BEFORE DECRYPTING:                  │
+│     → MySQL cannot read encrypted tables                    │
+│     → Data becomes permanently unreadable                   │
+│     → No recovery possible ❌                              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## ✅ Prerequisites
+## Step 1 — Take Full Backup
 
-- MySQL **8.0 or higher**
-- Linux-based system (Ubuntu/Debian recommended)
-- `sudo` / root access
-- MySQL root password
-
----
-
-## Step 1 — Login to MySQL Correctly
-
-> ⚠️ **Important:** SQL commands must be run **inside MySQL**, not in the Linux terminal (bash).
+> ⚠️ **Never skip this step. Always backup before making any changes.**
 
 ```bash
-# Run this in your Linux terminal
+# Full database backup
+mysqldump -u root -p --all-databases > backup_before_disable_tde.sql
+
+# Verify backup file was created and has data
+ls -lh backup_before_disable_tde.sql
+
+# Also backup your keyring file
+sudo cp /var/lib/mysql-keyring/keyring ~/keyring_backup_safe.key
+
+# Confirm both exist
+ls -lh backup_before_disable_tde.sql
+ls -lh ~/keyring_backup_safe.key
+```
+
+---
+
+## Step 2 — Login to MySQL
+
+```bash
+# Open terminal and login to MySQL
 mysql -u root -p
 
-# Enter your MySQL root password when prompted
-# You will see the MySQL prompt:
-# mysql>
+# Enter your root password
+# You will see: mysql>
+# Now you are inside MySQL
 ```
-
-> You are now inside MySQL and can run SQL commands.
 
 ---
 
-## Step 2 — Check MySQL Version
+## Step 3 — Check Current Encryption Status
 
-Run this **inside MySQL** (`mysql>` prompt):
+Before disabling, check which tables are currently encrypted:
 
 ```sql
-SELECT VERSION();
+-- Check all tables and their encryption status
+SELECT
+    TABLE_NAME,
+    CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name';
 ```
 
-**Expected output:**
+**Output when tables ARE encrypted:**
 ```
-+-----------+
-| VERSION() |
-+-----------+
-| 8.0.xx    |
-+-----------+
++------------------+----------------+
+| TABLE_NAME       | CREATE_OPTIONS |
++------------------+----------------+
+| users            | ENCRYPTION="Y" |  ← encrypted
+| orders           | ENCRYPTION="Y" |  ← encrypted
+| payments         | ENCRYPTION="Y" |  ← encrypted
++------------------+----------------+
 ```
 
-> You need **8.0+** for full TDE support. If you are on 5.7, upgrade first.
+**Also check keyring plugin is active:**
+```sql
+SELECT PLUGIN_NAME, PLUGIN_STATUS
+FROM information_schema.PLUGINS
+WHERE PLUGIN_NAME LIKE '%keyring%';
+
+-- Must show ACTIVE before proceeding
+-- +──────────────+───────────────+
+-- | keyring_file | ACTIVE        |
+-- +──────────────+───────────────+
+```
+
+> ⚠️ If keyring is NOT active, do not proceed — fix keyring first or data will be lost.
 
 ---
 
-## Step 3 — Edit MySQL Config File
+## Step 4 — Decrypt All Tables
 
-Exit MySQL first, then find the correct config file:
+### Option A — Auto Generate Decrypt Commands (Recommended)
+
+```sql
+-- This generates ALTER TABLE commands for all your tables
+SELECT CONCAT('ALTER TABLE ', TABLE_NAME, " ENCRYPTION='N';")
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name'
+AND ENGINE = 'InnoDB';
+```
+
+This will output something like:
+
+```sql
+ALTER TABLE users ENCRYPTION='N';
+ALTER TABLE orders ENCRYPTION='N';
+ALTER TABLE payments ENCRYPTION='N';
+ALTER TABLE products ENCRYPTION='N';
+ALTER TABLE categories ENCRYPTION='N';
+```
+
+**Copy all lines and run them one by one.**
+
+---
+
+### Option B — Decrypt Tables Manually One by One
+
+```sql
+ALTER TABLE users ENCRYPTION='N';
+ALTER TABLE orders ENCRYPTION='N';
+ALTER TABLE payments ENCRYPTION='N';
+ALTER TABLE products ENCRYPTION='N';
+-- add all your table names here
+```
+
+> Each ALTER TABLE command will take a few seconds depending on table size. This is normal.
+
+---
+
+## Step 5 — Decrypt Database Schema
+
+After all tables are decrypted, decrypt the database schema itself:
+
+```sql
+ALTER DATABASE your_database_name ENCRYPTION='N';
+```
+
+---
+
+## Step 6 — Verify Decryption Complete
+
+```sql
+-- Check all tables are now decrypted
+SELECT
+    TABLE_NAME,
+    CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name';
+```
+
+**Expected output after successful decryption:**
+```
++------------------+----------------+
+| TABLE_NAME       | CREATE_OPTIONS |
++------------------+----------------+
+| users            |                |  ← empty = decrypted ✅
+| orders           |                |  ← empty = decrypted ✅
+| payments         |                |  ← empty = decrypted ✅
++------------------+----------------+
+```
+
+> If `CREATE_OPTIONS` is **empty** for ALL tables — decryption is complete. ✅
+> If any table still shows `ENCRYPTION="Y"` — run ALTER TABLE for that table again.
+
+---
+
+## Step 7 — Remove Encryption from Config File
+
+Exit MySQL first, then find and edit the correct config file:
 
 ```bash
 # Exit MySQL
@@ -143,174 +234,127 @@ ls /etc/mysql/conf.d/
 ```
 
 ```bash
-# Step 4 — Open mysql.cnf (this is the correct file to edit)
+# Step 4 — Open the correct file to edit
 sudo nano /etc/mysql/conf.d/mysql.cnf
 ```
 
-> ⚠️ **Important:** You will see `[mysql]` at the top — do NOT remove it. Add a NEW `[mysqld]` section BELOW the existing `[mysql]` section.
+> ⚠️ **Important:** You will see `[mysql]` at the top — do NOT remove it. Find the `[mysqld]` section below it and comment out or remove only the encryption lines.
 
-Your file should look like this after editing:
+**Your file should look like this after editing:**
 
 ```ini
 [mysql]
 # whatever was already here — DO NOT touch this section
 
 [mysqld]
-# ─── Keyring / Encryption Settings ──────────────────────
-early-plugin-load=keyring_file.so
-keyring_file_data=/var/lib/mysql-keyring/keyring
-
-# Encrypt all new tables by default
-default_table_encryption=ON
-
-# Encrypt binary logs
-binlog_encryption=ON
-
-# Encrypt redo and undo logs
-innodb_redo_log_encrypt=ON
-innodb_undo_log_encrypt=ON
+# ── REMOVE or COMMENT these encryption lines ────────────
+# early-plugin-load=keyring_file.so
+# keyring_file_data=/var/lib/mysql-keyring/keyring
+# default_table_encryption=ON
+# binlog_encryption=ON
+# innodb_redo_log_encrypt=ON
+# innodb_undo_log_encrypt=ON
 ```
 
-> ⚠️ **Common Mistake:** If you put encryption settings under `[mysql]` instead of `[mysqld]` you will get error: `unknown variable 'early-plugin-load=keyring_file.so'`
+> To comment a line — add `#` at the start of the line.
+> To remove — delete the line completely.
 
-Save the file:
+Save and exit:
 - Press `Ctrl + X`
 - Press `Y`
 - Press `Enter`
 
 ---
 
-## Step 4 — Create Keyring Directory
-
-```bash
-# Create the keyring folder
-sudo mkdir -p /var/lib/mysql-keyring
-
-# Give MySQL ownership
-sudo chown mysql:mysql /var/lib/mysql-keyring
-
-# Set secure permissions
-sudo chmod 750 /var/lib/mysql-keyring
-```
-
----
-
-## Step 5 — Restart MySQL
+## Step 8 — Restart MySQL
 
 ```bash
 sudo systemctl restart mysql
 
-# Confirm MySQL is running properly
+# Confirm MySQL started successfully
 sudo systemctl status mysql
 ```
 
 **Expected output:**
 ```
 ● mysql.service - MySQL Community Server
-   Active: active (running)
+   Active: active (running)  ✅
 ```
 
 ---
 
-## Step 6 — Verify Keyring Plugin
+## Step 9 — Final Verification
 
-Login to MySQL again and verify the plugin is loaded:
+Login to MySQL again and confirm everything is working:
 
 ```bash
 mysql -u root -p
 ```
 
 ```sql
--- Check keyring plugin status
+-- Check keyring plugin is now gone (removed from config)
 SELECT PLUGIN_NAME, PLUGIN_STATUS
 FROM information_schema.PLUGINS
 WHERE PLUGIN_NAME LIKE '%keyring%';
+-- Should return empty result
+
+-- Check all tables are decrypted
+SELECT TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name';
+-- CREATE_OPTIONS should be empty for all tables
+
+-- Check you can still read your data normally
+SELECT * FROM users LIMIT 5;
+-- Should show normal readable data ✅
 ```
 
-**Expected output:**
-```
-+--------------+---------------+
-| PLUGIN_NAME  | PLUGIN_STATUS |
-+--------------+---------------+
-| keyring_file | ACTIVE        |
-+--------------+---------------+
-```
-
-> If status is **ACTIVE** — you are good to go. ✅
+> If data is readable and `CREATE_OPTIONS` is empty — **TDE is fully disabled!** ✅
 
 ---
 
-## Step 7 — Encrypt Your Database
+## 🐳 Disable TDE in Docker Setup
 
-### 7a — Select Your Database First
+If your MySQL runs inside Docker:
 
-> ⚠️ **Important:** Always run `USE` command first — otherwise you will get `no database selected` error.
+### Step 1 — Enter the Container and Decrypt Tables
 
-```sql
-USE your_database_name;
+```bash
+# Enter running MySQL container
+docker exec -it mysql_prod bash
+
+# Login to MySQL inside container
+mysql -u root -p
 ```
 
-### 7b — Encrypt the Database Schema
-
 ```sql
-ALTER DATABASE your_database_name ENCRYPTION='Y';
-```
-
-### 7c — Auto-Generate ALTER Commands for All Tables
-
-```sql
--- Run this to get ALTER statements for all your tables
-SELECT CONCAT('ALTER TABLE ', TABLE_NAME, " ENCRYPTION='Y';")
+-- Generate decrypt commands for all tables
+SELECT CONCAT('ALTER TABLE ', TABLE_NAME, " ENCRYPTION='N';")
 FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'your_database_name'
 AND ENGINE = 'InnoDB';
-```
 
-This will output something like:
+-- Run all generated ALTER TABLE commands
+ALTER TABLE users ENCRYPTION='N';
+ALTER TABLE orders ENCRYPTION='N';
+-- ... all tables
 
-```sql
-ALTER TABLE users ENCRYPTION='Y';
-ALTER TABLE orders ENCRYPTION='Y';
-ALTER TABLE payments ENCRYPTION='Y';
-ALTER TABLE products ENCRYPTION='Y';
--- ...and so on
-```
+-- Decrypt database schema
+ALTER DATABASE your_database_name ENCRYPTION='N';
 
-**Copy all the output and run it.** Each table will be encrypted one by one.
-
----
-
-## Step 8 — Verify Encryption
-
-```sql
--- Check encryption status of all tables
-SELECT
-    TABLE_NAME,
-    CREATE_OPTIONS
+-- Verify
+SELECT TABLE_NAME, CREATE_OPTIONS
 FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'your_database_name';
+
+-- Exit MySQL
+exit
+
+-- Exit container
+exit
 ```
 
-**Expected output:**
-```
-+------------------+----------------+
-| TABLE_NAME       | CREATE_OPTIONS |
-+------------------+----------------+
-| users            | ENCRYPTION="Y" |
-| orders           | ENCRYPTION="Y" |
-| payments         | ENCRYPTION="Y" |
-+------------------+----------------+
-```
-
-> If `CREATE_OPTIONS` shows `ENCRYPTION="Y"` for all tables — **encryption is complete!** ✅
-
----
-
-## Step 9 — Production Setup with docker-compose.yml
-
-If your production database runs inside **Docker**, update your `docker-compose.yml` like this:
-
-### `docker-compose.yml`
+### Step 2 — Update docker-compose.yml
 
 ```yaml
 version: '3.8'
@@ -327,178 +371,255 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf      # Custom config
-      - ./mysql/keyring:/var/lib/mysql-keyring        # Keyring volume
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf
     ports:
       - "3306:3306"
-    command: >
-      --early-plugin-load=keyring_file.so
-      --keyring_file_data=/var/lib/mysql-keyring/keyring
-      --default_table_encryption=ON
-      --binlog_encryption=ON
-      --innodb_redo_log_encrypt=ON
-      --innodb_undo_log_encrypt=ON
+    # ── REMOVE these encryption lines ──────────────────
+    # command: >
+    #   --early-plugin-load=keyring_file.so
+    #   --keyring_file_data=/var/lib/mysql-keyring/keyring
+    #   --default_table_encryption=ON
+    #   --binlog_encryption=ON
+    #   --innodb_redo_log_encrypt=ON
+    #   --innodb_undo_log_encrypt=ON
 
 volumes:
   mysql_data:
 ```
 
-### `./mysql/my.cnf`
-
-Create this file in your project:
+### Step 3 — Update ./mysql/my.cnf
 
 ```ini
+[mysql]
+# whatever was already here — DO NOT touch this section
+
 [mysqld]
-early-plugin-load=keyring_file.so
-keyring_file_data=/var/lib/mysql-keyring/keyring
-default_table_encryption=ON
-binlog_encryption=ON
-innodb_redo_log_encrypt=ON
-innodb_undo_log_encrypt=ON
+# ── Comment out or remove all encryption lines ──────
+# early-plugin-load=keyring_file.so
+# keyring_file_data=/var/lib/mysql-keyring/keyring
+# default_table_encryption=ON
+# binlog_encryption=ON
+# innodb_redo_log_encrypt=ON
+# innodb_undo_log_encrypt=ON
 ```
 
-### Folder Structure
-
-```
-your-project/
-├── docker-compose.yml
-├── mysql/
-│   ├── my.cnf          ← MySQL encryption config
-│   └── keyring/        ← Keyring files stored here
-├── .env                ← DB credentials (never commit this)
-└── ...
-```
-
-### `.env` file (never push to GitHub)
-
-```env
-DB_ROOT_PASSWORD=your_strong_root_password
-DB_NAME=your_database_name
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-```
-
-> ⚠️ Add `.env` to your `.gitignore` file!
+### Step 4 — Restart Docker Container
 
 ```bash
-echo ".env" >> .gitignore
+# Restart container with new config
+docker-compose down
+docker-compose up -d
+
+# Check container is running
+docker ps
+
+# Verify MySQL is healthy
+docker logs mysql_prod
 ```
 
 ---
 
-## Step 10 — Backup Your Keyring File
+## 🎯 Disable Only Specific Tables
 
-> ⚠️ **CRITICAL WARNING:** If you lose the keyring file, your encrypted data is **permanently unrecoverable** — even with a full SQL dump backup.
+If you want to disable TDE on **some tables only** and keep others encrypted:
+
+```sql
+-- Decrypt only specific tables
+ALTER TABLE logs ENCRYPTION='N';
+ALTER TABLE sessions ENCRYPTION='N';
+
+-- Keep sensitive tables encrypted (do not touch these)
+-- ALTER TABLE users ENCRYPTION='N';    ← leave this
+-- ALTER TABLE payments ENCRYPTION='N'; ← leave this
+```
+
+**Check mixed status:**
+```sql
+SELECT TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name';
+
+-- Example output:
+-- +──────────+────────────────+
+-- | users    | ENCRYPTION="Y" |  ← still encrypted ✅
+-- | payments | ENCRYPTION="Y" |  ← still encrypted ✅
+-- | logs     |                |  ← decrypted
+-- | sessions |                |  ← decrypted
+-- +──────────+────────────────+
+```
+
+---
+
+## ❌ Common Errors and Fixes
+
+### Error 1 — Keyring Plugin Not Active
+
+```
+ERROR: Can't initialize keyring plugin
+```
+
+**Fix:**
+```bash
+# Check keyring directory exists
+ls -la /var/lib/mysql-keyring/
+
+# If missing, restore keyring backup
+sudo cp ~/keyring_backup_safe.key /var/lib/mysql-keyring/keyring
+sudo chown mysql:mysql /var/lib/mysql-keyring/keyring
+sudo chmod 640 /var/lib/mysql-keyring/keyring
+sudo systemctl restart mysql
+```
+
+---
+
+### Error 2 — Table Still Shows Encrypted After ALTER
+
+```sql
+-- Run this to check which tables are still encrypted
+SELECT TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name'
+AND CREATE_OPTIONS LIKE '%ENCRYPTION%';
+
+-- Run ALTER TABLE again for those specific tables
+ALTER TABLE problematic_table ENCRYPTION='N';
+```
+
+---
+
+### Error 3 — MySQL Won't Start After Config Change
 
 ```bash
-# Copy keyring to a safe separate location
-sudo cp /var/lib/mysql-keyring/keyring /secure-location/keyring.backup
+# Check MySQL error log
+sudo tail -50 /var/log/mysql/error.log
 
-# Set secure permissions on backup
-chmod 600 /secure-location/keyring.backup
-```
+# Most common fix — restore config
+sudo nano /etc/mysql/conf.d/mysql.cnf
+# Make sure no syntax errors in config file
+# Make sure encryption lines are commented out under [mysqld]
 
-**Recommended keyring storage options:**
-
-| Option | Description |
-|---|---|
-| **AWS Secrets Manager** | Cloud-based, highly secure |
-| **HashiCorp Vault** | Enterprise-grade key management |
-| **Separate encrypted USB** | Physical offline backup |
-| **Different server** | Never same server as database |
-
----
-
-## ⚠️ Common Mistakes
-
-| Mistake | What happens | Fix |
-|---|---|---|
-| Running SQL in bash terminal | `syntax error near unexpected token` | Login with `mysql -u root -p` first |
-| Adding config under `[mysql]` instead of `[mysqld]` | `unknown variable 'early-plugin-load'` error | Add new `[mysqld]` section below existing `[mysql]` |
-| Editing `/etc/mysql/my.cnf` when it has no `[mysqld]` | Settings ignored | Edit `/etc/mysql/conf.d/mysql.cnf` instead |
-| Forgetting `USE database_name;` before ALTER TABLE | `no database selected` error | Always run `USE your_db;` first |
-| Losing keyring file | Data permanently lost | Always backup keyring separately |
-| Storing keyring on same server | Defeats encryption purpose | Use separate server or secret manager |
-| Not backing up before encrypting | Risk of data loss | Always run `mysqldump` before encrypting |
-| Forgetting to encrypt existing tables | Old tables stay unencrypted | Run ALTER TABLE on all existing tables |
-
----
-
-## 🛡️ Security Layering Strategy
-
-```
-┌──────────────────────────────────────────┐
-│         Your Application (Backend)       │  ← Input validation, auth ✅
-├──────────────────────────────────────────┤
-│      Column-Level AES (Optional)         │  ← Extra sensitive fields only
-├──────────────────────────────────────────┤
-│    TDE — InnoDB Tablespace Encryption    │  ← Whole database ✅ (this guide)
-├──────────────────────────────────────────┤
-│      Disk / Volume Encryption            │  ← OS level (LUKS on Linux)
-└──────────────────────────────────────────┘
-         ↑ More layers = more secure
+sudo systemctl restart mysql
 ```
 
 ---
 
-## 📋 Quick Reference — Commands Summary
+### Error 4 — Access Denied
+
+```
+ERROR 1045: Access denied for user 'root'@'localhost'
+```
+
+**Fix:**
+```bash
+# Use sudo with MySQL
+sudo mysql
+
+# Or specify socket
+mysql -u root -p --socket=/var/run/mysqld/mysqld.sock
+```
+
+---
+
+## 📋 Quick Reference Commands
 
 ```bash
-# 1. Login to MySQL
+# ── TERMINAL COMMANDS ────────────────────────────────────
+
+# Backup before disabling
+mysqldump -u root -p --all-databases > backup_before_disable_tde.sql
+
+# Backup keyring
+sudo cp /var/lib/mysql-keyring/keyring ~/keyring_backup_safe.key
+
+# Login to MySQL
 mysql -u root -p
 
-# 2. Check version (inside MySQL)
-SELECT VERSION();
-
-# 3. Find correct config file
-sudo find /etc -name "my.cnf" 2>/dev/null
-ls /etc/mysql/conf.d/
-
-# 4. Edit correct config file (Ubuntu — conf.d folder)
+# Edit correct config file (Ubuntu — conf.d folder)
 sudo nano /etc/mysql/conf.d/mysql.cnf
-# Add [mysqld] section BELOW existing [mysql] section
 
-# 5. Create keyring folder
-sudo mkdir -p /var/lib/mysql-keyring
-sudo chown mysql:mysql /var/lib/mysql-keyring
-sudo chmod 750 /var/lib/mysql-keyring
-
-# 6. Restart MySQL
+# Restart MySQL
 sudo systemctl restart mysql
 
-# 7. Verify keyring (inside MySQL)
-SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME LIKE '%keyring%';
+# Check MySQL status
+sudo systemctl status mysql
 
-# 8. Select database first (inside MySQL)
-USE your_db;
+# Check MySQL error log
+sudo tail -50 /var/log/mysql/error.log
 
-# 9. Encrypt database (inside MySQL)
-ALTER DATABASE your_db ENCRYPTION='Y';
+# Docker — enter container
+docker exec -it mysql_prod bash
+```
 
-# 10. Encrypt all tables — generate commands (inside MySQL)
-SELECT CONCAT('ALTER TABLE ', TABLE_NAME, " ENCRYPTION='Y';")
+```sql
+-- ── MYSQL COMMANDS (run inside mysql> prompt) ────────────
+
+-- Check keyring active
+SELECT PLUGIN_NAME, PLUGIN_STATUS
+FROM information_schema.PLUGINS
+WHERE PLUGIN_NAME LIKE '%keyring%';
+
+-- Check encryption status of all tables
+SELECT TABLE_NAME, CREATE_OPTIONS
 FROM information_schema.TABLES
-WHERE TABLE_SCHEMA = 'your_db' AND ENGINE = 'InnoDB';
--- Copy output and run all ALTER TABLE commands
+WHERE TABLE_SCHEMA = 'your_database_name';
 
-# 11. Verify (inside MySQL)
-SELECT TABLE_NAME, CREATE_OPTIONS FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'your_db';
+-- Auto generate decrypt commands
+SELECT CONCAT('ALTER TABLE ', TABLE_NAME, " ENCRYPTION='N';")
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name'
+AND ENGINE = 'InnoDB';
 
-# 12. Backup keyring
-sudo cp /var/lib/mysql-keyring/keyring /secure-location/keyring.backup
+-- Decrypt database schema
+ALTER DATABASE your_database_name ENCRYPTION='N';
+
+-- Check only encrypted tables
+SELECT TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'your_database_name'
+AND CREATE_OPTIONS LIKE '%ENCRYPTION%';
+
+-- Verify data still readable
+SELECT * FROM users LIMIT 5;
 ```
 
 ---
 
-## 📚 References
+## ✅ Disable TDE Checklist
 
-- [MySQL 8.0 InnoDB Encryption Docs](https://dev.mysql.com/doc/refman/8.0/en/innodb-data-encryption.html)
-- [MySQL Keyring Plugin](https://dev.mysql.com/doc/refman/8.0/en/keyring.html)
-- [HashiCorp Vault](https://www.vaultproject.io/)
-- [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/)
+```
+Before Starting:
+☐ Take full mysqldump backup
+☐ Backup keyring file separately
+☐ Confirm keyring plugin is ACTIVE
+☐ Plan for low traffic window
+
+Decryption Steps:
+☐ Login to MySQL (mysql -u root -p)
+☐ Check current encryption status
+☐ Generate ALTER TABLE commands for all tables
+☐ Run all ALTER TABLE ENCRYPTION='N' commands
+☐ Run ALTER DATABASE ENCRYPTION='N'
+☐ Verify all tables show empty CREATE_OPTIONS
+
+Config Cleanup:
+☐ Exit MySQL
+☐ Check /etc/mysql/my.cnf — if no [mysqld] section edit conf.d/mysql.cnf instead
+☐ Open /etc/mysql/conf.d/mysql.cnf
+☐ Comment out all encryption lines under [mysqld]
+☐ DO NOT touch [mysql] section at top
+☐ Restart MySQL
+☐ Confirm MySQL started successfully
+
+Final Check:
+☐ Login to MySQL again
+☐ Verify keyring plugin removed
+☐ Verify all tables decrypted
+☐ Run SELECT on tables — confirm data readable
+☐ TDE successfully disabled ✅
+```
 
 ---
 
 > 📝 **Author:** Ali Husnain
 > 🗓️ **Last Updated:** 2026
-> 🔒 **Purpose:** MySQL TDE Encryption — Complete Production Guide
+> 🔒 **Purpose:** MySQL TDE Disable — Complete Safe Guide
