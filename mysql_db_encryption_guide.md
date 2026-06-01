@@ -47,6 +47,7 @@
 | **Code changes needed?** | ❌ None | ✅ Yes, app must encrypt/decrypt |
 | **Performance impact** | ~3–5% | Higher per query |
 | **Use case** | Encrypt everything | Extra sensitive fields (e.g. passwords) |
+
 > **Conclusion:** For encrypting the whole database → **TDE is the right and complete solution.**
 
 ---
@@ -112,26 +113,49 @@ SELECT VERSION();
 
 ## Step 3 — Edit MySQL Config File
 
-Exit MySQL first, then edit the config file:
+Exit MySQL first, then find the correct config file:
 
 ```bash
 # Exit MySQL
 exit
 
-# Find your config file location
+# Step 1 — Find your config file location
 sudo find /etc -name "my.cnf" 2>/dev/null
-
-# Open the config file (usually at one of these paths)
-sudo nano /etc/mysql/my.cnf
-# OR
-sudo nano /etc/my.cnf
 ```
 
-Add the following lines inside the `[mysqld]` section:
+You will see two results:
+```
+/etc/mysql/my.cnf          ← main file (usually just has !includedir)
+/etc/alternatives/my.cnf   ← just a shortcut, ignore this
+```
+
+```bash
+# Step 2 — Check what is inside /etc/mysql/my.cnf
+sudo nano /etc/mysql/my.cnf
+```
+
+> ⚠️ **Important:** If `/etc/mysql/my.cnf` only has comments and `!includedir /etc/mysql/conf.d/` with NO `[mysqld]` section — this means MySQL reads config from the `conf.d` folder instead. This is common on Ubuntu.
+
+```bash
+# Step 3 — Check conf.d folder
+ls /etc/mysql/conf.d/
+# You will see: mysql.cnf  mysqldump.cnf
+```
+
+```bash
+# Step 4 — Open mysql.cnf (this is the correct file to edit)
+sudo nano /etc/mysql/conf.d/mysql.cnf
+```
+
+> ⚠️ **Important:** You will see `[mysql]` at the top — do NOT remove it. Add a NEW `[mysqld]` section BELOW the existing `[mysql]` section.
+
+Your file should look like this after editing:
 
 ```ini
-[mysqld]
+[mysql]
+# whatever was already here — DO NOT touch this section
 
+[mysqld]
 # ─── Keyring / Encryption Settings ──────────────────────
 early-plugin-load=keyring_file.so
 keyring_file_data=/var/lib/mysql-keyring/keyring
@@ -146,6 +170,8 @@ binlog_encryption=ON
 innodb_redo_log_encrypt=ON
 innodb_undo_log_encrypt=ON
 ```
+
+> ⚠️ **Common Mistake:** If you put encryption settings under `[mysql]` instead of `[mysqld]` you will get error: `unknown variable 'early-plugin-load=keyring_file.so'`
 
 Save the file:
 - Press `Ctrl + X`
@@ -216,13 +242,21 @@ WHERE PLUGIN_NAME LIKE '%keyring%';
 
 ## Step 7 — Encrypt Your Database
 
-### 7a — Encrypt the Database Schema
+### 7a — Select Your Database First
+
+> ⚠️ **Important:** Always run `USE` command first — otherwise you will get `no database selected` error.
+
+```sql
+USE your_database_name;
+```
+
+### 7b — Encrypt the Database Schema
 
 ```sql
 ALTER DATABASE your_database_name ENCRYPTION='Y';
 ```
 
-### 7b — Auto-Generate ALTER Commands for All Tables
+### 7c — Auto-Generate ALTER Commands for All Tables
 
 ```sql
 -- Run this to get ALTER statements for all your tables
@@ -380,6 +414,9 @@ chmod 600 /secure-location/keyring.backup
 | Mistake | What happens | Fix |
 |---|---|---|
 | Running SQL in bash terminal | `syntax error near unexpected token` | Login with `mysql -u root -p` first |
+| Adding config under `[mysql]` instead of `[mysqld]` | `unknown variable 'early-plugin-load'` error | Add new `[mysqld]` section below existing `[mysql]` |
+| Editing `/etc/mysql/my.cnf` when it has no `[mysqld]` | Settings ignored | Edit `/etc/mysql/conf.d/mysql.cnf` instead |
+| Forgetting `USE database_name;` before ALTER TABLE | `no database selected` error | Always run `USE your_db;` first |
 | Losing keyring file | Data permanently lost | Always backup keyring separately |
 | Storing keyring on same server | Defeats encryption purpose | Use separate server or secret manager |
 | Not backing up before encrypting | Risk of data loss | Always run `mysqldump` before encrypting |
@@ -413,32 +450,41 @@ mysql -u root -p
 # 2. Check version (inside MySQL)
 SELECT VERSION();
 
-# 3. Edit config
-sudo nano /etc/mysql/my.cnf
+# 3. Find correct config file
+sudo find /etc -name "my.cnf" 2>/dev/null
+ls /etc/mysql/conf.d/
 
-# 4. Create keyring folder
+# 4. Edit correct config file (Ubuntu — conf.d folder)
+sudo nano /etc/mysql/conf.d/mysql.cnf
+# Add [mysqld] section BELOW existing [mysql] section
+
+# 5. Create keyring folder
 sudo mkdir -p /var/lib/mysql-keyring
 sudo chown mysql:mysql /var/lib/mysql-keyring
 sudo chmod 750 /var/lib/mysql-keyring
 
-# 5. Restart MySQL
+# 6. Restart MySQL
 sudo systemctl restart mysql
 
-# 6. Verify keyring (inside MySQL)
+# 7. Verify keyring (inside MySQL)
 SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME LIKE '%keyring%';
 
-# 7. Encrypt database (inside MySQL)
+# 8. Select database first (inside MySQL)
+USE your_db;
+
+# 9. Encrypt database (inside MySQL)
 ALTER DATABASE your_db ENCRYPTION='Y';
 
-# 8. Encrypt all tables — generate commands (inside MySQL)
+# 10. Encrypt all tables — generate commands (inside MySQL)
 SELECT CONCAT('ALTER TABLE ', TABLE_NAME, " ENCRYPTION='Y';")
 FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'your_db' AND ENGINE = 'InnoDB';
+-- Copy output and run all ALTER TABLE commands
 
-# 9. Verify (inside MySQL)
+# 11. Verify (inside MySQL)
 SELECT TABLE_NAME, CREATE_OPTIONS FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'your_db';
 
-# 10. Backup keyring
+# 12. Backup keyring
 sudo cp /var/lib/mysql-keyring/keyring /secure-location/keyring.backup
 ```
 
